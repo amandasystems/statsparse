@@ -5,19 +5,27 @@ use toml::Value;
 
 type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
 
+macro_rules! unwrap_or_return {
+    ( $e:expr, $v: expr ) => {
+        match $e {
+            Some(x) => x,
+            None => return $v,
+        }
+    };
+}
+
 fn benchmark_to_csv_rows(benchmark: &Value) -> Vec<String> {
-    let results = benchmark
-        .get("results")
-        .and_then(|results| results.as_array())
-        .and_then(|results| results.get(0)) // There's just one block
-        .and_then(|results| results.as_table())
-        .unwrap();
-    let app = benchmark.get("app").and_then(|app| app.as_table()).unwrap();
-    let options = app.get("options").and_then(|o| o.as_array());
-    if options.is_none() {
-        return vec![];
-    }
-    let tags = options.unwrap()
+    let results = unwrap_or_return!(
+        benchmark
+            .get("results")
+            .and_then(|results| results.as_array())
+            .and_then(|results| results.get(0)) // There's just one block
+            .and_then(|results| results.as_table()),
+        vec![]
+    );
+    let app = unwrap_or_return!(benchmark.get("app").and_then(|app| app.as_table()), vec![]);
+    let options = unwrap_or_return!(app.get("options").and_then(|o| o.as_array()), vec![]);
+    let tags = options
         .iter()
         .find_map(|option| {
             option.get("name").and_then(|name| {
@@ -32,10 +40,10 @@ fn benchmark_to_csv_rows(benchmark: &Value) -> Vec<String> {
         .and_then(|tags| tags.get(0))
         .and_then(|tags| tags.as_str())
         .and_then(|tag_string| {
-            let mut split_iter = tag_string.split("-");
-            let left: i64 = split_iter.next().and_then(|l| l.parse().ok()).unwrap();
-            let right: i64 = split_iter.next().and_then(|l| l.parse().ok()).unwrap();
-            // FIXME we should nest error reporting here and not use unwrap.
+            let mut split_iter = tag_string.split('-');
+            let left: i64 = unwrap_or_return!(split_iter.next().and_then(|l| l.parse().ok()), None);
+            let right: i64 =
+                unwrap_or_return!(split_iter.next().and_then(|l| l.parse().ok()), None);
             Some((left, right))
         });
 
@@ -56,13 +64,13 @@ fn benchmark_to_csv_rows(benchmark: &Value) -> Vec<String> {
         .and_then(|t| t.get("output"))
         .and_then(|o| o.get(0))
         .and_then(|output| output.as_str())
-        .and_then(|output| {
-            let mut out_iter = output.split("\n").into_iter();
+        .map(|output| {
+            let mut out_iter = output.split('\n');
             let nr_values: usize = out_iter
                 .next()
                 .and_then(|nr_parameters| nr_parameters.parse().ok())
                 .unwrap();
-            Some(out_iter.take(nr_values).collect())
+            out_iter.take(nr_values).collect()
         })
         .unwrap();
     ms_run
@@ -84,14 +92,12 @@ fn toml_to_csv(results: Value) -> Result<Vec<String>> {
         .as_table()
         .and_then(|root_table| root_table.get("benchmark"))
         .and_then(|bs| bs.as_array())
-        .and_then(|bs| {
-            Some(
-                bs.iter()
-                    .flat_map(benchmark_to_csv_rows)
-                    .collect::<Vec<String>>(),
-            )
+        .map(|bs| {
+            bs.iter()
+                .flat_map(benchmark_to_csv_rows)
+                .collect::<Vec<String>>()
         })
-        .ok_or("Invalid format".into())
+        .ok_or_else(|| "Invalid format".into())
 }
 
 fn main() -> Result<()> {
